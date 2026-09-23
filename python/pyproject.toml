@@ -1,0 +1,7 @@
+[project]
+name = "easypingmake-perfect-pixel-runtime"
+version = "0.1.0"
+requires-python = ">=3.8"
+dependencies = [
+  "perfect-pixel[opencv]==0.1.4",
+]

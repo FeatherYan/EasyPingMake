@@ -1,0 +1,22 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+
+# local generation debug artifacts
+debug/
+
+# local PerfectPixel Python environment
+python/.venv/
+
+# local environment
+.env
+.env.*
+!.env.example
+
+# editor and operating system files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
