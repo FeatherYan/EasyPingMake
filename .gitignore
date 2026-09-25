@@ -5,7 +5,7 @@ node_modules/
 dist/
 
 # local generation debug artifacts
-debug/
+/debug/
 
 # local PerfectPixel Python environment
 python/.venv/
