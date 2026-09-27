@@ -6,8 +6,7 @@ export interface AiGenerationRequest {
   sourceImage: Blob;
   style: AiGenerationStyle;
   preferredCanvasSize: CanvasPreset;
-  maxColors: number;
-  paletteId: "MARD221";
+  paletteId: "MARD291";
 }
 
 export interface AiGenerationProgress {
@@ -19,11 +18,20 @@ export interface AiGenerationProgress {
 export interface AiGenerationResult {
   image: Blob;
   providerId: string;
+  /** Images and raw responses for each AI generation stage, in execution order. */
+  stages?: AiGenerationStageResult[];
   /** Optional prior from a provider; the converter must still validate/recover the grid. */
   nativeGridHint?: {
     columns: number;
     rows: number;
   };
+  rawResponse?: string;
+}
+
+export interface AiGenerationStageResult {
+  id: string;
+  label: string;
+  image: Blob;
   rawResponse?: string;
 }
 

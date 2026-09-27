@@ -41,6 +41,54 @@ function sendJson(response: ServerResponse, statusCode: number, body: unknown): 
   response.end(JSON.stringify(body));
 }
 
+function aiImageProxyPlugin(apiKey: string | undefined, keyHeader: string, keyPrefix: string): Plugin {
+  return {
+    name: "easy-ping-make-ai-image-proxy",
+    configureServer(server) {
+      server.middlewares.use("/api/ai/image-proxy", (request, response, next) => {
+        if (request.method !== "POST") {
+          next();
+          return;
+        }
+
+        void (async () => {
+          try {
+            const body = JSON.parse((await readBody(request, 32 * 1024)).toString("utf8")) as { url?: unknown };
+            if (typeof body.url !== "string" || body.url.length === 0) {
+              sendJson(response, 400, { error: "image proxy requires a URL" });
+              return;
+            }
+
+            const target = new URL(body.url);
+            if (target.protocol !== "http:" && target.protocol !== "https:") {
+              sendJson(response, 400, { error: "unsupported image URL protocol" });
+              return;
+            }
+
+            const imageResponse = await fetch(target, {
+              headers: apiKey ? { [keyHeader]: keyPrefix ? `${keyPrefix} ${apiKey}` : apiKey } : {},
+            });
+            if (!imageResponse.ok) {
+              sendJson(response, imageResponse.status, { error: "unable to read image URL" });
+              return;
+            }
+
+            const imageBody = Buffer.from(await imageResponse.arrayBuffer());
+            response.statusCode = 200;
+            response.setHeader("Content-Type", imageResponse.headers.get("content-type") || "image/png");
+            response.setHeader("Cache-Control", "no-store");
+            response.end(imageBody);
+          } catch (error) {
+            if (!response.headersSent) {
+              sendJson(response, 502, { error: error instanceof Error ? error.message : "unable to proxy image URL" });
+            }
+          }
+        })();
+      });
+    },
+  };
+}
+
 function readBody(request: IncomingMessage, maxBytes: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -291,6 +339,7 @@ export default defineConfig(({ mode }) => {
       react(),
       perfectPixelPlugin(environment.PERFECT_PIXEL_PYTHON || process.env.PERFECT_PIXEL_PYTHON),
       generationDebugFilePlugin(),
+      ...(endpointUrl ? [aiImageProxyPlugin(apiKey, keyHeader, keyPrefix)] : []),
     ],
     server: endpointUrl ? {
       proxy: {

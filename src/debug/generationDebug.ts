@@ -1,4 +1,4 @@
-import { loadMard221Palette } from "../domain/palette";
+import { loadMard291Palette } from "../domain/palette";
 import type { PixelGrid } from "../domain/pattern";
 import { canvasToPngBlob } from "../image/browserImage";
 import type { RasterGrid } from "../processing/types";
@@ -151,7 +151,7 @@ export async function renderPixelGridToPng(grid: PixelGrid): Promise<Blob> {
     throw new Error("色号网格数据与声明的宽高不一致。");
   }
 
-  const palette = new Map(loadMard221Palette().map((color) => [color.code, parseHexColor(color.hex)]));
+  const palette = new Map(loadMard291Palette().map((color) => [color.code, parseHexColor(color.hex)]));
   const { canvas, imageData } = createGridCanvas(grid.width, grid.height);
   grid.cells.forEach((row, y) => {
     row.forEach((code, x) => {
@@ -160,7 +160,7 @@ export async function renderPixelGridToPng(grid: PixelGrid): Promise<Blob> {
       }
       const color = palette.get(code);
       if (!color) {
-        throw new Error(`未找到 MARD221 色号：${code}`);
+        throw new Error(`未找到 MARD291 色号：${code}`);
       }
       setPixel(imageData.data, y * grid.width + x, color[0], color[1], color[2], 255);
     });

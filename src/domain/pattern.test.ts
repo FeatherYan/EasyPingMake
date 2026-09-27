@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   calculateBounds,
   calculatePhysicalWorkSize,
+  calculatePhysicalSizeFromCells,
+  formatPhysicalSizeCm,
   chooseCanvasSize,
   createPatternDocumentFromGrid,
 } from "./pattern";
@@ -16,6 +18,12 @@ describe("pattern sizing", () => {
 
     expect(bounds).toMatchObject({ minX: 1, minY: 1, maxX: 2, maxY: 2, width: 2, height: 2 });
     expect(calculatePhysicalWorkSize(bounds)).toEqual({ widthMm: 5.6, heightMm: 5.6 });
+  });
+
+  it("formats board and content sizes as rounded centimeters", () => {
+    expect(formatPhysicalSizeCm(calculatePhysicalSizeFromCells(52, 52))).toBe("15 × 15 cm");
+    expect(formatPhysicalSizeCm(calculatePhysicalSizeFromCells(11, 8))).toBe("3 × 2 cm");
+    expect(formatPhysicalSizeCm(null)).toBe("暂无有效拼豆");
   });
 
   it("uses the preferred canvas as a minimum and grows through presets", () => {

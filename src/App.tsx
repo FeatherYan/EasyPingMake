@@ -3,12 +3,12 @@ import { ArrowRight, Pencil, Plus, Trash2, WandSparkles } from "lucide-react";
 import EditorPage from "./editor/EditorPage";
 import GenerationPage from "./generation/GenerationPage";
 import { CANVAS_PRESETS, createBlankPatternDocument, createPatternDocumentFromGrid, type CanvasPreset, type PatternDocument } from "./domain/pattern";
-import { loadMard221Palette } from "./domain/palette";
+import { loadMard291Palette } from "./domain/palette";
 import { downloadPatternPng } from "./export/patternPng";
 import { deletePattern, readPatterns, savePattern } from "./storage/patternStorage";
 import logoUrl from "./assets/easy-ping-make-logo.svg";
 
-const palette = loadMard221Palette();
+const palette = loadMard291Palette();
 const paletteMap = new Map(palette.map((color) => [color.code, color.hex]));
 const foundationPattern = createPatternDocumentFromGrid({
   id: "foundation-preview",

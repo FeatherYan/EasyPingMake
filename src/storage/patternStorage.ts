@@ -1,6 +1,9 @@
 import type { PatternDocument } from "../domain/pattern";
+import { MARD291_PALETTE_ID } from "../domain/palette";
 
 const STORAGE_KEY = "easypingmake.patterns.v1";
+
+type StoredPatternDocument = Omit<PatternDocument, "paletteId"> & { paletteId: string };
 
 function getStorage(storage?: Storage): Storage | null {
   if (storage) {
@@ -18,7 +21,13 @@ export function readPatterns(storage?: Storage): PatternDocument[] {
 
   try {
     const raw = target.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as PatternDocument[]) : [];
+    if (!raw) {
+      return [];
+    }
+    const storedPatterns = JSON.parse(raw) as StoredPatternDocument[];
+    return storedPatterns.map((pattern) => pattern.paletteId === "MARD221"
+      ? { ...pattern, paletteId: MARD291_PALETTE_ID }
+      : pattern) as PatternDocument[];
   } catch {
     return [];
   }

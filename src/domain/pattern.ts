@@ -1,3 +1,5 @@
+import { MARD291_PALETTE_ID } from "./palette";
+
 export const BEAD_SIZE_MM = 2.8;
 export const CANVAS_PRESETS = [52, 78, 104] as const;
 
@@ -24,10 +26,24 @@ export interface PhysicalWorkSize {
   heightMm: number;
 }
 
+export function calculatePhysicalSizeFromCells(width: number, height: number): PhysicalWorkSize {
+  return {
+    widthMm: width * BEAD_SIZE_MM,
+    heightMm: height * BEAD_SIZE_MM,
+  };
+}
+
+export function formatPhysicalSizeCm(size: PhysicalWorkSize | null): string {
+  if (!size) {
+    return "暂无有效拼豆";
+  }
+  return `${Math.round(size.widthMm / 10)} × ${Math.round(size.heightMm / 10)} cm`;
+}
+
 export interface PatternDocument {
   id: string;
   name: string;
-  paletteId: "MARD221";
+  paletteId: typeof MARD291_PALETTE_ID;
   cellSizeMm: typeof BEAD_SIZE_MM;
   canvas: {
     width: number;
@@ -97,10 +113,7 @@ export function calculatePhysicalWorkSize(bounds: PixelBounds | null): PhysicalW
     return null;
   }
 
-  return {
-    widthMm: bounds.width * BEAD_SIZE_MM,
-    heightMm: bounds.height * BEAD_SIZE_MM,
-  };
+  return calculatePhysicalSizeFromCells(bounds.width, bounds.height);
 }
 
 function normalizePreferredCanvasSize(preferredCanvasSize: number): number {
@@ -159,7 +172,7 @@ export function createPatternDocumentFromGrid(options: {
   return {
     id: options.id ?? createPatternId(),
     name: options.name ?? "未命名图纸",
-    paletteId: "MARD221",
+    paletteId: MARD291_PALETTE_ID,
     cellSizeMm: BEAD_SIZE_MM,
     canvas: { width: canvasSize, height: canvasSize },
     cells,

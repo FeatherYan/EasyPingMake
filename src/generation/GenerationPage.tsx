@@ -1,12 +1,12 @@
-import { useEffect, useState } from "react";
-import { ArrowLeft, FlipHorizontal2, ImagePlus, Loader2, RotateCw, WandSparkles } from "lucide-react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type SyntheticEvent } from "react";
+import { ArrowLeft, Check, FlipHorizontal2, FlipVertical2, ImagePlus, Loader2, Pencil, RotateCcw, RotateCw, Trash2, Upload, WandSparkles, X } from "lucide-react";
 import { openAiCompatibleProvider } from "../ai/openAiCompatibleProvider";
 import type { AiGenerationProgress, AiGenerationStyle } from "../ai/types";
-import { buildGenerationPrompt, generationStyles } from "../ai/promptTemplates";
+import { buildGenerationPromptStages, generationStyles } from "../ai/promptTemplates";
 import { createDebugSession, renderPixelGridToPng, renderRasterGridToPng, saveDebugArtifact, updateDebugSession } from "../debug/generationDebug";
 import { CANVAS_PRESETS, type CanvasPreset, type PatternDocument } from "../domain/pattern";
-import { loadMard221Palette } from "../domain/palette";
-import { canvasToPngBlob, decodeImageBlob, encodeRgbaImageToPng, transformImageBlob, type ImageTransform } from "../image/browserImage";
+import { loadMard291Palette } from "../domain/palette";
+import { canvasToPngBlob, decodeImageBlob, encodeRgbaImageToPng, transformImageBlob, updateImageCrop, type CropHandle, type ImageCrop, type ImageTransform } from "../image/browserImage";
 import { renderPatternToCanvas } from "../export/patternPng";
 import { convertGeneratedImageToPattern } from "../processing/pipeline";
 import { autoGridRecoveryAdapter } from "../processing/autoGridAdapter";
@@ -22,8 +22,29 @@ interface GenerationPageProps {
 const initialTransform: ImageTransform = {
   rotation: 0,
   flipHorizontal: false,
-  cropToSquare: true,
+  flipVertical: false,
+  cropToSquare: false,
+  crop: null,
 };
+
+interface ImageSize {
+  width: number;
+  height: number;
+}
+
+interface DisplayImageRect extends ImageSize {
+  left: number;
+  top: number;
+}
+
+interface CropPointerState {
+  pointerId: number;
+  mode: "move" | "resize";
+  handle?: CropHandle;
+  startX: number;
+  startY: number;
+  origin: ImageCrop;
+}
 
 function jsonBlob(value: unknown): Blob {
   if (typeof value === "string") {
@@ -37,19 +58,58 @@ function sourceExtension(file: File): string {
   return extension && /^[a-z0-9]+$/.test(extension) ? extension : "img";
 }
 
+function cloneTransform(transform: ImageTransform): ImageTransform {
+  return {
+    ...transform,
+    crop: transform.crop ? { ...transform.crop } : null,
+  };
+}
+
+
 export default function GenerationPage({ onBack, onCreatePattern }: GenerationPageProps) {
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [processedPreviewUrl, setProcessedPreviewUrl] = useState<string | null>(null);
   const [transform, setTransform] = useState(initialTransform);
+  const [editingTransform, setEditingTransform] = useState<ImageTransform | null>(null);
+  const [editingSnapshot, setEditingSnapshot] = useState<ImageTransform | null>(null);
   const [style, setStyle] = useState<AiGenerationStyle>(generationStyles[0].id);
-  const [preferredCanvasSize, setPreferredCanvasSize] = useState<CanvasPreset>(CANVAS_PRESETS[0]);
-  const [maxColors, setMaxColors] = useState(20);
+  const preferredCanvasSize: CanvasPreset = CANVAS_PRESETS[0];
+  const activeGenerationStyle = generationStyles.find((item) => item.id === style) ?? generationStyles[0];
+  const maxColors = activeGenerationStyle.maxColors;
   const [progress, setProgress] = useState<AiGenerationProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [imageSize, setImageSize] = useState<ImageSize | null>(null);
+  const [displayImageSize, setDisplayImageSize] = useState<ImageSize | null>(null);
+  const [stageSize, setStageSize] = useState<ImageSize>({ width: 0, height: 0 });
+  const [isEditing, setIsEditing] = useState(false);
+  const imageStageRef = useRef<HTMLDivElement | null>(null);
+  const cropPointerRef = useRef<CropPointerState | null>(null);
+  const processedPreviewUrlRef = useRef<string | null>(null);
+
+  function revokeProcessedPreviewUrl() {
+    const previousUrl = processedPreviewUrlRef.current;
+    if (previousUrl) {
+      URL.revokeObjectURL(previousUrl);
+      processedPreviewUrlRef.current = null;
+    }
+  }
+
+  function replaceProcessedPreviewUrl(nextUrl: string | null) {
+    revokeProcessedPreviewUrl();
+    processedPreviewUrlRef.current = nextUrl;
+    setProcessedPreviewUrl(nextUrl);
+  }
 
   useEffect(() => {
     if (!sourceFile) {
+      replaceProcessedPreviewUrl(null);
       setPreviewUrl(null);
+      setImageSize(null);
+      setDisplayImageSize(null);
+      setIsEditing(false);
+      setEditingTransform(null);
+      setEditingSnapshot(null);
       return;
     }
 
@@ -57,6 +117,73 @@ export default function GenerationPage({ onBack, onCreatePattern }: GenerationPa
     setPreviewUrl(url);
     return () => URL.revokeObjectURL(url);
   }, [sourceFile]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!sourceFile || isEditing || !imageSize) {
+      replaceProcessedPreviewUrl(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    replaceProcessedPreviewUrl(null);
+    transformImageBlob(sourceFile, transform)
+      .then((blob) => {
+        if (cancelled) {
+          return;
+        }
+        replaceProcessedPreviewUrl(URL.createObjectURL(blob));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          replaceProcessedPreviewUrl(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceFile, transform, isEditing, imageSize]);
+
+  useEffect(() => () => revokeProcessedPreviewUrl(), []);
+
+  useEffect(() => {
+    const stage = imageStageRef.current;
+    if (!stage) {
+      return;
+    }
+    const updateSize = () => setStageSize({ width: stage.clientWidth, height: stage.clientHeight });
+    updateSize();
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(updateSize) : null;
+    observer?.observe(stage);
+    window.addEventListener("resize", updateSize);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateSize);
+    };
+  }, [previewUrl, isEditing]);
+
+  const activeImageSize = isEditing ? imageSize : displayImageSize ?? imageSize;
+  const displayImageRect: DisplayImageRect | null = activeImageSize && stageSize.width > 0 && stageSize.height > 0
+    ? (() => {
+      const padding = 16;
+      const scale = Math.min(
+        Math.max(1, stageSize.width - padding * 2) / activeImageSize.width,
+        Math.max(1, stageSize.height - padding * 2) / activeImageSize.height,
+      );
+      const width = activeImageSize.width * scale;
+      const height = activeImageSize.height * scale;
+      return {
+        width,
+        height,
+        left: Math.max(padding, (stageSize.width - width) / 2),
+        top: Math.max(padding, (stageSize.height - height) / 2),
+      };
+    })()
+    : null;
+  const previewTransform = isEditing && editingTransform ? editingTransform : transform;
+  const activePreviewUrl = isEditing ? previewUrl : processedPreviewUrl ?? previewUrl;
 
   function selectFile(file: File | undefined) {
     if (!file) {
@@ -68,18 +195,132 @@ export default function GenerationPage({ onBack, onCreatePattern }: GenerationPa
     }
     setSourceFile(file);
     setTransform(initialTransform);
+    setImageSize(null);
+    setDisplayImageSize(null);
+    setIsEditing(false);
+    setEditingTransform(null);
+    setEditingSnapshot(null);
+    cropPointerRef.current = null;
     setError(null);
   }
 
   function removeFile() {
     setSourceFile(null);
     setPreviewUrl(null);
+    setImageSize(null);
+    setDisplayImageSize(null);
+    setIsEditing(false);
+    setEditingTransform(null);
+    setEditingSnapshot(null);
+    cropPointerRef.current = null;
     setProgress(null);
     setError(null);
   }
 
-  function rotate() {
-    setTransform((current) => ({ ...current, rotation: ((current.rotation + 90) % 360) as ImageTransform["rotation"] }));
+  function handleImageLoad(event: SyntheticEvent<HTMLImageElement>) {
+    const width = event.currentTarget.naturalWidth;
+    const height = event.currentTarget.naturalHeight;
+    if (!width || !height) {
+      return;
+    }
+    setImageSize({ width, height });
+    setDisplayImageSize({ width, height });
+  }
+
+  function handleProcessedImageLoad(event: SyntheticEvent<HTMLImageElement>) {
+    const width = event.currentTarget.naturalWidth;
+    const height = event.currentTarget.naturalHeight;
+    if (width && height) {
+      setDisplayImageSize({ width, height });
+    }
+  }
+
+  function startEditing() {
+    const snapshot = cloneTransform(transform);
+    setEditingSnapshot(snapshot);
+    setEditingTransform(snapshot);
+    setIsEditing(true);
+  }
+
+  function completeEditing() {
+    if (editingTransform) {
+      setTransform(cloneTransform(editingTransform));
+    }
+    setEditingTransform(null);
+    setEditingSnapshot(null);
+    setIsEditing(false);
+    cropPointerRef.current = null;
+  }
+
+  function cancelEditing() {
+    if (editingSnapshot) {
+      setTransform(cloneTransform(editingSnapshot));
+    }
+    setEditingTransform(null);
+    setEditingSnapshot(null);
+    setIsEditing(false);
+    cropPointerRef.current = null;
+  }
+
+  function rotate(direction: -1 | 1 = 1) {
+    setEditingTransform((current) => current
+      ? { ...current, rotation: ((current.rotation + direction * 90 + 360) % 360) as ImageTransform["rotation"] }
+      : current);
+  }
+
+  function toggleFlip(axis: "horizontal" | "vertical") {
+    setEditingTransform((current) => current && (axis === "horizontal"
+      ? { ...current, flipHorizontal: !current.flipHorizontal }
+      : { ...current, flipVertical: !current.flipVertical }));
+  }
+
+  function getCrop(): ImageCrop {
+    return editingTransform?.crop ?? transform.crop ?? { x: 0, y: 0, width: 1, height: 1 };
+  }
+
+  function beginCropPointer(event: ReactPointerEvent<HTMLElement>, mode: CropPointerState["mode"], handle?: CropHandle) {
+    const stage = imageStageRef.current;
+    if (!isEditing || !editingTransform || !displayImageRect || !stage) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    stage.setPointerCapture(event.pointerId);
+    cropPointerRef.current = {
+      pointerId: event.pointerId,
+      mode,
+      handle,
+      startX: event.clientX,
+      startY: event.clientY,
+      origin: getCrop(),
+    };
+  }
+
+  function moveCropPointer(event: ReactPointerEvent<HTMLElement>) {
+    const pointer = cropPointerRef.current;
+    if (!pointer || pointer.pointerId !== event.pointerId || !displayImageRect || !editingTransform) {
+      return;
+    }
+    event.preventDefault();
+    const deltaX = (event.clientX - pointer.startX) / displayImageRect.width;
+    const deltaY = (event.clientY - pointer.startY) / displayImageRect.height;
+    setEditingTransform((current) => current ? {
+      ...current,
+      crop: updateImageCrop(pointer.origin, pointer.mode, pointer.handle, deltaX, deltaY),
+      cropToSquare: false,
+    } : current);
+  }
+
+  function finishCropPointer(event: ReactPointerEvent<HTMLElement>) {
+    const pointer = cropPointerRef.current;
+    if (!pointer || pointer.pointerId !== event.pointerId) {
+      return;
+    }
+    const stage = imageStageRef.current;
+    if (stage?.hasPointerCapture(event.pointerId)) {
+      stage.releasePointerCapture(event.pointerId);
+    }
+    cropPointerRef.current = null;
   }
 
   async function generate() {
@@ -91,7 +332,7 @@ export default function GenerationPage({ onBack, onCreatePattern }: GenerationPa
     setError(null);
     const debugMetadata: Record<string, unknown> = {
       app: "EasyPingMake",
-      formatVersion: 1,
+      formatVersion: 2,
       source: {
         filename: sourceFile.name,
         mimeType: sourceFile.type,
@@ -102,13 +343,10 @@ export default function GenerationPage({ onBack, onCreatePattern }: GenerationPa
         style,
         preferredCanvasSize,
         maxColors,
-        paletteId: "MARD221",
+        paletteId: "MARD291",
         model: import.meta.env.VITE_AI_IMAGE_MODEL || null,
         size: import.meta.env.VITE_AI_IMAGE_SIZE || "1024x1024",
-        prompt: buildGenerationPrompt(style, {
-          preferredCanvasSize,
-          maxColors,
-        }),
+        promptStages: buildGenerationPromptStages(style),
       },
       stages: {},
     };
@@ -153,11 +391,29 @@ export default function GenerationPage({ onBack, onCreatePattern }: GenerationPa
         sourceImage: preparedImage,
         style,
         preferredCanvasSize,
-        maxColors,
-        paletteId: "MARD221",
+        paletteId: "MARD291",
       }, setProgress);
-      await saveJsonStage("03-ai-response.json", generated.rawResponse ?? { note: "Provider 未返回原始响应文本" }, "AI 接口返回的原始 JSON 响应");
-      await saveStage("04-ai-result.png", generated.image, "AI 返回的图片");
+      const aiStages = generated.stages ?? [{
+        id: "final",
+        label: "AI 最终输出",
+        image: generated.image,
+        rawResponse: generated.rawResponse,
+      }];
+      for (const [index, aiStage] of aiStages.entries()) {
+        const sequence = String(index + 1).padStart(2, "0");
+        await saveJsonStage(
+          `03-ai-stage-${sequence}-${aiStage.id}-response.json`,
+          aiStage.rawResponse ?? { note: "Provider 未返回原始响应文本" },
+          `${aiStage.label} 的 AI 接口响应`,
+          { stageId: aiStage.id, stageLabel: aiStage.label },
+        );
+        await saveStage(
+          `04-ai-stage-${sequence}-${aiStage.id}.png`,
+          aiStage.image,
+          aiStage.label,
+          { stageId: aiStage.id, stageLabel: aiStage.label },
+        );
+      }
       const image = await decodeImageBlob(generated.image);
       await saveStage("05-decoded-raster.png", await encodeRgbaImageToPng(image), "浏览器解码后的 RGBA 像素图", {
         width: image.width,
@@ -235,17 +491,30 @@ export default function GenerationPage({ onBack, onCreatePattern }: GenerationPa
         },
         attempts: result.recovery.attempts ?? [],
       }, "网格恢复的几何参数、诊断信息和采样网格");
-      await saveStage("09-mapped-mard221.png", await renderPixelGridToPng(result.mapped.pixelGrid), "映射到 MARD221 后的可编辑色号网格", {
+      if (result.mapped.nearestPaletteGrid) {
+        await saveStage(
+          "09a-nearest-mard291.png",
+          await renderPixelGridToPng(result.mapped.nearestPaletteGrid),
+          "未执行风格限色时的 MARD291 最近色结果",
+        );
+        await saveJsonStage(
+          "09a-nearest-mard291.json",
+          result.mapped.nearestPaletteGrid,
+          "未执行风格限色时的 MARD291 最近色网格",
+        );
+      }
+      await saveStage("09-mapped-mard291.png", await renderPixelGridToPng(result.mapped.pixelGrid), "映射到 MARD291 后的可编辑色号网格", {
         width: result.mapped.pixelGrid.width,
         height: result.mapped.pixelGrid.height,
         colorCount: result.mapped.colorCodes.size,
         emptyCellCount: result.mapped.emptyCellCount,
       });
-      await saveJsonStage("10-mapped-mard221.json", result.mapped.pixelGrid, "MARD221 色号像素网格数据", {
+      await saveJsonStage("10-mapped-mard291.json", result.mapped.pixelGrid, "MARD291 色号像素网格数据", {
         width: result.mapped.pixelGrid.width,
         height: result.mapped.pixelGrid.height,
       });
-      await saveStage("11-final-pattern.png", await canvasToPngBlob(renderPatternToCanvas(result.pattern, loadMard221Palette())), "最终进入编辑器的图纸画布", {
+      await saveJsonStage("10-mapping-diagnostics.json", result.mapped.mappingDiagnostics ?? null, "色板限色前后色差与最终色号用量");
+      await saveStage("11-final-pattern.png", await canvasToPngBlob(renderPatternToCanvas(result.pattern, loadMard291Palette())), "最终进入编辑器的图纸画布", {
         width: result.pattern.canvas.width,
         height: result.pattern.canvas.height,
       });
@@ -291,40 +560,105 @@ export default function GenerationPage({ onBack, onCreatePattern }: GenerationPa
           <span className="status-label">AI generation / pet avatar</span>
           <h1>生成拼豆图纸</h1>
         </div>
-        <span className="generation-badge">MARD221 · 单格 2.8mm</span>
+        <span className="generation-badge">MARD291 · 单格 2.8mm</span>
       </header>
 
-      <section className="generation-layout">
+      <section className="generation-layout generation-layout-compact">
         <section className="upload-panel">
           <div className="section-heading">
             <div>
               <span className="status-label">1 / Reference</span>
-              <h2>上传宠物图片</h2>
+              <h2>上传参考图片</h2>
             </div>
-            <label className="upload-button">
-              <ImagePlus size={18} />选择图片
-              <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => selectFile(event.target.files?.[0])} />
-            </label>
           </div>
-          <div className={`image-preview ${previewUrl ? "has-image" : ""}`}>
-            {previewUrl ? (
-              <img src={previewUrl} alt="已上传的宠物图片预览" style={{ transform: `rotate(${transform.rotation}deg) scaleX(${transform.flipHorizontal ? -1 : 1})` }} />
+          {sourceFile && (
+            <div className="image-preview-toolbar" aria-label="图片操作">
+              <button className={`secondary-button image-action-control ${isEditing ? "is-active" : ""}`} type="button" onClick={isEditing ? cancelEditing : startEditing} aria-pressed={isEditing}>
+                <Pencil size={16} />编辑
+              </button>
+              <button className="icon-button image-action-icon" type="button" onClick={removeFile} aria-label="删除图片" title="删除图片">
+                  <Trash2 size={16} />
+              </button>
+              <label className="secondary-button image-action-button">
+                <Upload size={16} />重新上传
+                <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { selectFile(event.target.files?.[0]); event.currentTarget.value = ""; }} />
+              </label>
+            </div>
+          )}
+          {isEditing && sourceFile && (
+            <div className="image-edit-toolbar" aria-label="图片编辑工具">
+              <button className="icon-button" type="button" onClick={() => rotate(-1)} aria-label="向左旋转" title="向左旋转"><RotateCcw size={17} /></button>
+              <button className="icon-button" type="button" onClick={() => rotate(1)} aria-label="向右旋转" title="向右旋转"><RotateCw size={17} /></button>
+              <button className="icon-button" type="button" onClick={() => toggleFlip("horizontal")} aria-label="水平翻转" title="水平翻转"><FlipHorizontal2 size={17} /></button>
+              <button className="icon-button" type="button" onClick={() => toggleFlip("vertical")} aria-label="垂直翻转" title="垂直翻转"><FlipVertical2 size={17} /></button>
+              <button className="icon-button" type="button" onClick={completeEditing} aria-label="完成编辑" title="完成编辑"><Check size={17} /></button>
+              <button className="icon-button" type="button" onClick={cancelEditing} aria-label="取消编辑" title="取消编辑"><X size={17} /></button>
+            </div>
+          )}
+          <div
+            className={`image-preview ${activePreviewUrl ? "has-image" : ""} ${isEditing ? "is-editing" : ""}`}
+            ref={imageStageRef}
+            onPointerMove={moveCropPointer}
+            onPointerUp={finishCropPointer}
+            onPointerCancel={finishCropPointer}
+            onLostPointerCapture={finishCropPointer}
+          >
+            {activePreviewUrl ? (
+              <div
+                className="image-stage-content"
+                style={displayImageRect ? {
+                  width: displayImageRect.width,
+                  height: displayImageRect.height,
+                  left: displayImageRect.left,
+                  top: displayImageRect.top,
+                } : undefined}
+              >
+                <img
+                  src={activePreviewUrl}
+                  alt="已上传的参考图片预览"
+                  onLoad={(event) => {
+                    if (isEditing || event.currentTarget.currentSrc === previewUrl) {
+                      handleImageLoad(event);
+                    } else {
+                      handleProcessedImageLoad(event);
+                    }
+                  }}
+                  style={isEditing ? { transform: `rotate(${previewTransform.rotation}deg) scale(${previewTransform.flipHorizontal ? -1 : 1}, ${previewTransform.flipVertical ? -1 : 1})` } : undefined}
+                />
+                {isEditing && (
+                  <div
+                    className="crop-selection"
+                    style={{ left: `${getCrop().x * 100}%`, top: `${getCrop().y * 100}%`, width: `${getCrop().width * 100}%`, height: `${getCrop().height * 100}%` }}
+                    onPointerDown={(event) => beginCropPointer(event, "move")}
+                  >
+                    <div className="crop-grid" aria-hidden="true" />
+                    {(["nw", "ne", "sw", "se"] as CropHandle[]).map((handle) => (
+                      <button
+                        key={handle}
+                        className={`crop-handle crop-handle-${handle}`}
+                        type="button"
+                        aria-label={`调整裁剪区域 ${handle}`}
+                        onPointerDown={(event) => beginCropPointer(event, "resize", handle)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
             ) : (
-              <div className="upload-empty"><ImagePlus size={40} /><p>选择一张 JPG、PNG 或 WebP 图片</p><span>建议使用主体清晰、光线充足的正面照片</span></div>
+              <label className="upload-empty" aria-label="上传参考图片">
+                <span className="upload-empty-icon"><ImagePlus size={40} /></span>
+                <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { selectFile(event.target.files?.[0]); event.currentTarget.value = ""; }} />
+                <p>点击图片图标上传参考图片</p>
+                <span>支持 JPG、PNG 和 WebP，建议使用主体清晰的图片</span>
+              </label>
             )}
-          </div>
-          <div className="image-actions">
-            <button className="secondary-button" disabled={!sourceFile} onClick={() => setTransform((current) => ({ ...current, cropToSquare: !current.cropToSquare }))}>{transform.cropToSquare ? "已居中裁剪" : "启用居中裁剪"}</button>
-            <button className="secondary-button" disabled={!sourceFile} onClick={rotate}><RotateCw size={16} />旋转 90°</button>
-            <button className="secondary-button" disabled={!sourceFile} onClick={() => setTransform((current) => ({ ...current, flipHorizontal: !current.flipHorizontal }))}><FlipHorizontal2 size={16} />水平翻转</button>
-            <button className="secondary-button" disabled={!sourceFile} onClick={removeFile}>删除图片</button>
           </div>
         </section>
 
         <section className="generation-settings">
           <div>
-            <span className="status-label">2 / Parameters</span>
-            <h2>生成参数</h2>
+            <span className="status-label">2 / Style</span>
+            <h2>生成风格</h2>
           </div>
           <label className="field-label">
             生成风格
@@ -332,33 +666,17 @@ export default function GenerationPage({ onBack, onCreatePattern }: GenerationPa
               {generationStyles.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}
             </select>
           </label>
-          <fieldset className="canvas-options generation-option-group">
-            <legend>首选画板 / AI 抽象程度</legend>
-            <div className="canvas-option-grid">
-              {CANVAS_PRESETS.map((size) => (
-                <label className={`canvas-option ${preferredCanvasSize === size ? "is-selected" : ""}`} key={size}>
-                  <input type="radio" name="generation-canvas-size" value={size} checked={preferredCanvasSize === size} onChange={() => setPreferredCanvasSize(size)} />
-                  <strong>{size}×{size}</strong>
-                  <span>不是强制采样网格</span>
-                </label>
-              ))}
-            </div>
-          </fieldset>
-          <label className="field-label">
-            最大颜色数量：{maxColors} 色
-            <input type="range" min="10" max="50" step="1" value={maxColors} onChange={(event) => setMaxColors(Number(event.target.value))} />
-          </label>
-          <div className="generation-explanation">
-            <strong>处理流程</strong>
-            <p>参考图 → 生成伪像素图 → 还原真实像素网格 → MARD221 映射 → 可编辑画板</p>
+          <div className="style-reference-placeholder" aria-label="风格样式参考预留区域">
+            <span>风格样式参考</span>
+            <small>后续可在此展示当前风格示例</small>
           </div>
           {error && <p className="error-message" role="alert">{error}</p>}
           <button className="primary-button generate-button" onClick={generate} disabled={Boolean(progress)}>
             {progress ? <><Loader2 className="spin" size={18} />{progress.message} {progress.percent}%</> : <><WandSparkles size={18} />生成图纸</>}
           </button>
-          <p className="demo-note">当前通过本地代理调用 OpenAI-compatible 图片接口；API Key 只放在项目根目录 .env.local。</p>
         </section>
       </section>
+
     </main>
   );
 }

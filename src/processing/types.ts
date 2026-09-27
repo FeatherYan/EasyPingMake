@@ -68,6 +68,16 @@ export interface PatternBuildResult {
   pixelGrid: PixelGrid;
   colorCodes: Set<string>;
   emptyCellCount: number;
+  nearestPaletteGrid?: PixelGrid;
+  mappingDiagnostics?: PaletteMappingDiagnostics;
+}
+
+export interface PaletteMappingDiagnostics {
+  selectedColors: Array<{ code: string; count: number }>;
+  nearestPaletteMeanDeltaE: number;
+  nearestPaletteMaxDeltaE: number;
+  limitedPaletteMeanDeltaE: number;
+  limitedPaletteMaxDeltaE: number;
 }
 
 export type PatternCodeGrid = Array<Array<PatternCell>>;

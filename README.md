@@ -5,7 +5,7 @@ EasyPingMake 是一个面向拼豆新手的本地网页版工具，用于将宠�
 当前开发基线：
 
 - MVP 按 P0 范围开发，当前已建立可运行的本地演示闭环；
-- MVP 色板为 MARD221，使用 A～H、M 共 221 个色号；
+- MVP 色板为 MARD291，使用 A～H、M、P、Q、R、T、Y、ZG 共 291 个色号；
 - 52×52、78×78、104×104 是编辑画板的首选尺寸，也是 AI 抽象程度参考；
 - AI 伪像素图先通过网格检测/提供器网格提示还原为真实像素，再转换为画板数据；
 - 每个画板格子代表一颗 2.8mm 拼豆；
@@ -28,7 +28,7 @@ npm.cmd run dev
 
 ## PerfectPixel 本地转换依赖
 
-当前生成流程在 AI 返回图片后，通过本地 Vite 接口调用 PerfectPixel，将伪像素图转换为真实像素图，再继续执行 MARD221 色号映射和图纸生成。当前版本先把 AI 返回的原始解码图作为普通 RGB 图片交给 PerfectPixel，暂不把去背景后的透明图作为其输入；PerfectPixel 输出后再执行主体背景清理。PerfectPixel 的输出像素会直接作为编辑器的视觉格子，2.8mm 只用于最终实体尺寸计算。
+当前生成流程在 AI 返回图片后，通过本地 Vite 接口调用 PerfectPixel，将伪像素图转换为真实像素图，再继续执行 MARD291 色号映射和图纸生成。当前版本先把 AI 返回的原始解码图作为普通 RGB 图片交给 PerfectPixel，暂不把去背景后的透明图作为其输入；PerfectPixel 输出后再执行主体背景清理。PerfectPixel 的输出像素会直接作为编辑器的视觉格子，2.8mm 只用于最终实体尺寸计算。
 
 首次使用前，需要安装 [uv](https://docs.astral.sh/uv/)，然后在项目根目录执行：
 
@@ -56,6 +56,6 @@ PerfectPixel 不可用时，流程会记录错误并回退到现有网格检测�
 - AI 原始响应、AI 返回图片和浏览器解码后的像素图；
 - PerfectPixel 还原后的真实像素图（`05c-perfect-pixel-output.png`）及运行诊断；
 - 每个网格恢复适配器的结果、最终选中的网格及恢复诊断 JSON；
-- MARD221 映射结果、最终图纸 PNG 和 `PatternDocument` JSON。
+- MARD291 映射结果、最终图纸 PNG 和 `PatternDocument` JSON。
 
 调试文件只在本地开发服务器运行时自动写入，不会包含 API Key。`debug/` 已加入 Git 忽略，不应提交这些生成产物。
